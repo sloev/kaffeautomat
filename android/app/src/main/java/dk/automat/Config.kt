@@ -16,6 +16,7 @@ data class AppConfig(
     val display: DisplayConfig,
     val camera: CameraConfig,
     val ntfyTopic: String?,
+    val server: ServerConfig?,
     val texts: Texts,
 ) {
     companion object {
@@ -49,6 +50,7 @@ data class AppConfig(
             val d = o.optJSONObject("display") ?: JSONObject()
             val c = o.optJSONObject("camera") ?: JSONObject()
             val t = o.optJSONObject("texts") ?: JSONObject()
+            val srv = o.optJSONObject("server") ?: JSONObject()
             val def = Texts()
 
             return AppConfig(
@@ -77,6 +79,13 @@ data class AppConfig(
                     retentionDays = c.optInt("retentionDays", 30),
                 ),
                 ntfyTopic = o.optString("ntfyTopic").takeIf { it.isNotBlank() },
+                server = srv.optString("url").takeIf { it.isNotBlank() }?.let {
+                    ServerConfig(
+                        url = it.trimEnd('/'),
+                        token = srv.optString("token"),
+                        heartbeatSec = srv.optInt("heartbeatSec", 60).coerceAtLeast(10),
+                    )
+                },
                 texts = Texts(
                     ready = t.optString("ready", def.ready),
                     busy = t.optString("busy", def.busy),
@@ -114,6 +123,9 @@ data class DisplayConfig(
     val brightness: Float,
     val qrPayload: String?,
 )
+
+/** Jeres egen server, som telefonen melder status til og henter kommandoer fra. */
+data class ServerConfig(val url: String, val token: String, val heartbeatSec: Int)
 
 data class CameraConfig(val enabled: Boolean, val front: Boolean, val tailMs: Long, val retentionDays: Int)
 

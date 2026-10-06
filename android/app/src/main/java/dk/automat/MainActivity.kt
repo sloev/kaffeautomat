@@ -73,6 +73,10 @@ class MainActivity : ComponentActivity() {
             }
         }
         lifecycleScope.launch { antiBurnIn() }
+        lifecycleScope.launch {
+            val shown = Machine.configVersion.value
+            Machine.configVersion.collect { if (it != shown) recreate() } // ny config: nyt vindue/kamera
+        }
 
         if (Machine.config.camera.enabled) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -85,12 +89,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        Machine.setUiVisible(true)
         val granted = packageName in NotificationManagerCompat.getEnabledListenerPackages(this)
         if (!granted) {
             Machine.setListenerConnected(false)
         } else {
             NotificationListenerService.requestRebind(ComponentName(this, PaymentListener::class.java))
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        Machine.setUiVisible(false)
     }
 
     private fun startCamera() {
@@ -194,20 +204,28 @@ class MainActivity : ComponentActivity() {
             "Spol søjle tilbage (1 s)",
             "Notifikationsadgang",
             "Genindlæs config.json",
+            "Tillad automatisk genåbning af skærmen",
         )
+        val contact = Machine.lastServerContact
+        val serverText = when {
+            Machine.config.server == null -> "ingen server sat op"
+            contact == 0L -> "ingen kontakt endnu"
+            else -> "sidst kontakt for ${(System.currentTimeMillis() - contact) / 1000} s siden"
+        }
         AlertDialog.Builder(this)
-            .setTitle("Lager\n$stockText\n\nFiler: ${Machine.filesDir}")
+            .setTitle("Lager\n$stockText\n\nServer: $serverText\nEnhed: ${Machine.deviceId}\nFiler: ${Machine.filesDir}")
             .setItems(items) { _, which ->
+                if (which == 4 || which == 6) Machine.pauseRelaunch(10 * 60_000L)
                 when (which) {
                     0 -> Machine.refillAll()
                     1 -> Machine.clearFault()
                     2 -> askNumber("Beløb i øre", Machine.config.products.first().priceOre) { Machine.simulatePayment(it) }
                     3 -> askNumber("Søjle", 0) { Machine.rewind(it.toInt(), 1000) }
                     4 -> startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                    5 -> lifecycleScope.launch {
-                        Machine.reloadConfig().join()
-                        recreate() // statusvindue og kamera bruger den nye config
-                    }
+                    5 -> Machine.reloadConfig()
+                    6 -> startActivity(
+                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName")),
+                    )
                 }
             }
             .show()

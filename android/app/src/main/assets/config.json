@@ -23,6 +23,8 @@
 
   "ntfyTopic": "",
 
+  "server": { "url": "", "token": "", "heartbeatSec": 60 },
+
   "texts": {
     "busy": "Tak! Din kaffe er på vej",
     "pickUp": "Tag din kaffe i skuffen"

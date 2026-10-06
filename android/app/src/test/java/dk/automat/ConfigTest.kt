@@ -26,6 +26,14 @@ class ConfigTest {
         assertEquals(null, c.display.qrPayload)
     }
 
+    @Test fun server() {
+        assertEquals(null, AppConfig.parse("""{"products":[{"id":"x","name":"X","priceOre":1}],"server":{"url":""}}""").server)
+        val s = AppConfig.parse("""{"products":[{"id":"x","name":"X","priceOre":1}],
+            "server":{"url":"https://a.dk/api/","token":"t","heartbeatSec":1}}""").server!!
+        assertEquals("https://a.dk/api", s.url)
+        assertEquals(10, s.heartbeatSec)
+    }
+
     @Test fun formatsKroner() {
         assertEquals("60 kr", formatKr(6000))
         assertEquals("60,50 kr", formatKr(6050))

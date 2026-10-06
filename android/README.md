@@ -20,6 +20,8 @@ Kræver Android SDK (sæt `sdk.dir` i `local.properties` eller `ANDROID_HOME`).
 | `Machine.kt` | Hjernen: kø, lager, motorstyring, sundhed, hvad skærmen viser |
 | `DeviceLink.kt` | Tekstprotokol til Arduino over USB-serial (+ `FakeLink` til test) |
 | `ClipRecorder.kt` | Videoklip af kunden pr. køb (CameraX, uden lyd) |
+| `ServerClient.kt` | Heartbeat til jeres server, udbakke for hændelser, kommandoer |
+| `BootReceiver.kt` | Starter automaten efter opstart og opdatering |
 | `Logs.kt` | `salg.csv`, `notifikationer.log`, push til ejeren via ntfy.sh |
 | `MainActivity.kt` | Sort skærm med lille statusvindue, ejer-menu (langt tryk) |
 

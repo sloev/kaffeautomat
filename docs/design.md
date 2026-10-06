@@ -38,6 +38,7 @@ Første anvendelse er kaffeautomaten, hvis mekanik står i
 | **Android-app** (`android/`) | Betaling, vare-valg, lager, kø, skærm, kamera, log, besked til ejer | `config.json` |
 | **Firmware** (`firmware/automat/`) | Kør søjle *n*'s motor til søjle *n*'s sensor melder "landet" | `SLOTS[]`-tabellen |
 | **Mekanik** | Selve udleveringen (wire, spiral, skub…) | Bygges pr. automat |
+| **Server** (`server/`) | Modtager heartbeat, viser status, alarmerer når en automat er væk, sender kommandoer | Jeres egen; reference i Python |
 
 Appen kender ikke til kaffe, wire eller ramper. Den ved kun: *varer har en pris
 og et søjle-nummer*, og *søjle n udleveres med `DISPENSE n`*.
@@ -50,8 +51,7 @@ og et søjle-nummer*, og *søjle n udleveres med `DISPENSE n`*.
 | **MobilePay MyShop** | **Nej** (siden okt. 2023) | 0,99 % pr. salg | **Ja.** Kræver CVR. 60 kr. → ca. 0,60 kr. i gebyr. |
 | ePayment / POS API | Aftale + integration | Gebyrer + udvikling | Overkill. |
 
-Telefonen skal være online for at få notifikationer: **WiFi** på stedet, eller et
-**taletidskort** uden binding (notifikationer bruger næsten ingen data).
+Telefonen kører på **WiFi** på stedet.
 
 ## 2. Telefonen læser notifikationen
 
@@ -73,15 +73,7 @@ notifikationer, når ejeren har givet *Notifikationsadgang*.
 5. **Notifikation fra MobilePay uden beløb** (reklame, ændret format) logges, og
    ejeren får besked.
 
-### Holde lytteren i live
-
-- Appen er telefonens **startskærm (HOME)** og står altid i forgrunden. Så dræber
-  Android den ikke, og den starter selv efter genstart.
-- `onListenerDisconnected` → `requestRebind`, og appen beder om rebind ved hver
-  `onResume`.
-- Slå **batterioptimering fra** for MobilePay og Automat. Telefonen sidder i
-  opladeren. Ingen skærmlås.
-- Skærmen viser "Ude af drift", hvis adgangen mangler eller lytteren er koblet fra.
+Hvordan appen holder sig selv i gang, står i afsnit 7.
 
 ## 3. Fra beløb til vare (generelt)
 
@@ -153,16 +145,22 @@ en klage ("jeg betalte, men fik intet") kan slås op. Klip ældre end
 *Senere:* et rullende for-klip (de 10 s før betalingen) kræver løbende optagelse
 i en ringbuffer. Det er udeladt for at spare strøm og slid.
 
-## 6. Telefon ↔ motorstyring
+## 6. Telefon ↔ motorstyring: USB
 
-**USB-OTG** til Arduino Nano/Uno eller ESP32 via
+**USB-OTG** til Arduino Nano/Uno (eller ESP32) via
 [usb-serial-for-android](https://github.com/mik3y/usb-serial-for-android).
 Appen åbner selv, når boardet sættes i (vælg "Brug altid").
 
-**Udfordring:** mange telefoner kan ikke **lade op og være USB-host samtidig**.
-Test et USB-C-hub med *Power Delivery-pass-through*. Virker det ikke: Bluetooth
-(HC-05 / ESP32) – protokollen er den samme, kun `DeviceLink` skal have en ny
-implementering. `"link": {"type": "fake"}` kører hele appen uden hardware.
+**Telefonen skal kunne lade op og være USB-host samtidig** – den kører døgnet
+rundt. Det kan langt fra alle. Løsning: et USB-C-hub med *Power Delivery
+pass-through* (laderen i hubbens PD-port, Arduinoen i en USB-A-port). **Test det
+med den konkrete telefon, før der købes flere** – appen viser batteri og
+"lader/lader ikke" på serverens statusside, så det kan ses efter et døgn.
+
+Arduinoen forsynes fra 12 V-forsyningen (VIN), så telefonen ikke skal levere
+strøm til den; USB bruges kun til data. Fælles GND mellem motor og Arduino.
+
+`"link": {"type": "fake"}` kører hele appen uden hardware.
 
 ### Protokol (9600 baud, linjer afsluttet med `\n`)
 
@@ -182,7 +180,122 @@ i telefonen aldrig kan køre en motor i stykker.
 Ved enhver fejl under udlevering går automaten **ude af drift**, indtil ejeren
 nulstiller den i ejer-menuen – så næste kunde ikke betaler for en fastkørt søjle.
 
-## 7. Konfiguration (`config.json`)
+## 7. Autostart: appen er altid tændt
+
+Lag på lag, så automaten kommer op igen uden at nogen skal derud:
+
+| Hvad går galt | Hvad sker der |
+|---|---|
+| **Telefonen genstarter** | Appen er telefonens **startskærm (HOME)**, så Android åbner den efter opstart. `BootReceiver` starter desuden hjernen (betaling + heartbeat) med det samme. |
+| **Appen bryder ned** | Android genstarter processen for notifikationslytterens skyld; hjernen starter igen, nedbruddet skrives til `nedbrud.txt` og sendes til serveren. |
+| **Skærmen er lukket** (nedbrud, "tilbage"-knap) | Hjernens vagthund åbner skærmen igen efter 30 s. Kræver tilladelsen *Vis over andre apps* (ejer-menuen → "Tillad automatisk genåbning"). Pauses 10 min, når ejeren åbner indstillinger fra menuen. |
+| **Notifikationslytteren kobles fra** | `requestRebind` straks og ved hver `onResume`. Vises på skærm og server. |
+| **Appen opdateres** | `MY_PACKAGE_REPLACED` starter den igen. |
+| **Strømsvigt – telefonen er slukket** | Telefonen skal selv tænde, når strømmen kommer igen. Se herunder. |
+
+Betalinger behandles af hjernen i appens proces, **også hvis skærmen ikke er
+åben** (så er der bare ingen status og intet kamera).
+
+**Telefonen tænder selv ved strøm:** det afhænger af modellen.
+
+- Mange Motorola/Pixel-telefoner: `fastboot oem off-mode-charge 0` (kræver
+  oplåst bootloader på nogle) – så booter de, når laderen får strøm.
+- Nogle Samsung/Xiaomi har *Planlagt tænd/sluk* i indstillingerne.
+- Ellers: lad batteriet være nok til at klare kortere strømsvigt, og lad
+  serveren alarmere, hvis heartbeat forsvinder.
+
+Vælg telefonmodel efter dette og USB-kravet i afsnit 6.
+
+**Telefonens indstillinger:** ingen skærmlås, batterioptimering slået fra for
+Automat og MobilePay, automatiske systemopdateringer om natten (eller fra),
+WiFi altid tændt i dvale.
+
+## 8. Server: "jeg er tændt" + fjernstyring
+
+Telefonen sender hvert `heartbeatSec` (60 s) en `POST {url}/heartbeat` til jeres
+server. Telefonen kalder kun ud, så der skal ikke åbnes porte på stedet.
+Serveren **skal** være https.
+
+```json
+"server": { "url": "https://automat.example.dk/api", "token": "lang-tilfældig-streng", "heartbeatSec": 60 }
+```
+
+**Request** (`Authorization: Bearer <token>`):
+
+```json
+{
+  "deviceId": "3f0c…",              "name": "Kaffeautomaten",   "appVersion": "0.1",
+  "time": 1791300000000,             "appStartedAt": 1791290000000, "phoneUptimeSec": 86400,
+  "screen":  { "title": "Kaffeautomaten", "lines": ["Kaffe · 60 kr", "Betal med MobilePay"], "mood": "NORMAL" },
+  "health":  { "online": true, "motorLink": true, "notificationAccess": true, "uiVisible": true,
+               "canRelaunchUi": true, "camera": true, "fault": null, "configError": null },
+  "battery": { "level": 100, "charging": true, "temperatureC": 31.5 },
+  "stock":   { "kaffe-mellem": 2 },
+  "counts":  { "payments": 4, "ok": 3, "refund": 1 },
+  "events":  [ { "ts": 1791299990000, "type": "sale", "payment": "…", "amountOre": 6000,
+                 "items": "1x Kaffe, mellemristet 500 g", "clip": "20261006-101500_1a2b3c.mp4" } ]
+}
+```
+
+Hændelser ligger i `udbakke.jsonl` på telefonen, til serveren har svaret 2xx – så
+intet går tabt, hvis WiFi er nede. Typer: `start` (evt. med `previousCrash`),
+`boot`, `sale`, `refund`, `fault`, `refill`, `unreadable`, `motorLink`,
+`notificationAccess`, `configError`, `command`.
+
+**Svar** – valgfrie kommandoer, som telefonen udfører med det samme og
+kvitterer for med en `command`-hændelse (`result: "ok"` eller fejltekst):
+
+```json
+{ "commands": [
+  { "id": "a1", "cmd": "refill" },
+  { "id": "a2", "cmd": "clearFault" },
+  { "id": "a3", "cmd": "setStock", "productId": "kaffe-mellem", "count": 3 },
+  { "id": "a4", "cmd": "reloadConfig" },
+  { "id": "a5", "cmd": "setConfig", "config": { "...": "hele config.json" } },
+  { "id": "a6", "cmd": "simulate", "amountOre": 6000 }
+] }
+```
+
+Kommandoer leveres højst én gang. `simulate` udleverer en vare uden betaling –
+beskyt token og admin-adgang derefter.
+
+**Hvem opdager at telefonen er død?** Det kan telefonen ikke selv. Serveren
+alarmerer, når der ikke er kommet heartbeat i `OFFLINE_AFTER` sekunder.
+
+**Reference-server:** [`server/server.py`](../server/server.py) – ét Python-script
+uden afhængigheder: tager imod heartbeat, statusside med knapper (genopfyld,
+nulstil fejl, genindlæs config), hændelseslog og alarmer via ntfy.sh (offline,
+refundering, fejl, nedbrud). Kør den bag Caddy/nginx for https.
+
+## 9. NFC / kort-betaling? (vurderet – ikke nu)
+
+Telefonen *kan* tage imod kontaktløse kort (Visa/Mastercard, også MobilePay og
+Apple/Google Pay i mobilens wallet) med **SoftPOS / Tap to Pay on Android**.
+Fordelen er stor: betalingen bekræftes direkte i appen af betalingsudbyderen –
+ingen notifikationslæsning – og appen sætter selv beløbet.
+
+| Udbyder | Danmark | Abonnement | Bemærkninger |
+|---|---|---|---|
+| **SumUp Tap-to-Pay SDK** | Ja (SumUp har Tap to Pay i DK) | Nej, gebyr pr. transaktion | SDK-adgang skal godkendes af SumUp. Android 11+, NFC. Betaling slås fra på telefoner med udviklertilstand, USB-debugging eller root. |
+| Stripe Terminal Tap to Pay | Ikke i Danmark pt. | Nej | Til ubemandet salg anbefaler Stripe en dedikeret læser. |
+
+Hvorfor ikke nu:
+
+1. **NFC-antennen sidder på bagsiden** af næsten alle telefoner. Med skærm og
+   frontkamera vendt mod kunden vender antennen ind i automaten. Kort-betaling og
+   statusvindue/kamera på samme telefon kræver en model med antenne foran, eller
+   en anden placering (f.eks. bagkameraet filmer, skærmen vender ind).
+2. **Ubemandet brug** skal godkendes af udbyderen (kortreglerne er anderledes for
+   ubemandede automater). Spørg SumUp, før der bygges.
+3. Udviklertilstand skal være slået fra – også på den telefon, der kører appen.
+4. Kunden skal kunne **vælge vare** før betaling (beløbet sættes af appen). Det
+   kræver knapper – f.eks. trykknapper på Arduinoen, der sender `BUTTON <n>` til
+   telefonen.
+
+Arkitekturen er klar til det: betaling er bare en kilde til `Payment`-objekter.
+Kort-betaling bliver en ekstra kilde ved siden af MobilePay, når 1–4 er afklaret.
+
+## 10. Konfiguration (`config.json`)
 
 Ligger i `Android/data/dk.automat/files/config.json` på telefonen og kan rettes
 via USB fra en computer. Første gang kopieres standarden fra appen
@@ -198,10 +311,11 @@ via USB fra en computer. Første gang kopieres standarden fra appen
 | `link` | `type` (`usb`/`fake`), `baud`, `dispenseTimeoutMs` |
 | `display` | Statusvinduet, se afsnit 4 |
 | `camera` | Se afsnit 5 |
-| `ntfyTopic` | Emne på [ntfy.sh](https://ntfy.sh) til push-beskeder til ejeren (gratis) |
+| `ntfyTopic` | Emne på [ntfy.sh](https://ntfy.sh) til push-beskeder direkte fra telefonen (gratis) |
+| `server` | `url`, `token`, `heartbeatSec` – se afsnit 8. Tom `url` = ingen server |
 | `texts` | Alle tekster kunden ser |
 
-## 8. Filer på telefonen
+## 11. Filer på telefonen
 
 I `Android/data/dk.automat/files/`:
 
@@ -210,9 +324,11 @@ I `Android/data/dk.automat/files/`:
 | `salg.csv` | Én linje pr. betaling: tid, betaling, beløb, `OK`/`REFUNDER`, detaljer, klip |
 | `notifikationer.log` | Rå notifikationer (log-tilstand) og ulæselige MobilePay-notifikationer |
 | `betalinger.txt` | Behandlede betalinger (dedup) |
+| `udbakke.jsonl` | Hændelser der venter på at blive sendt til serveren |
+| `nedbrud.txt` | Seneste nedbrud (sendes og slettes ved næste opstart) |
 | `klip/` | Videoklip |
 
-## 9. Ejer-menu
+## 12. Ejer-menu
 
 Langt tryk på skærmen (lågen skal være åben, skærmen sidder bag glas):
 
@@ -224,36 +340,47 @@ Langt tryk på skærmen (lågen skal være åben, skærmen sidder bag glas):
 - **Spol søjle tilbage**
 - **Notifikationsadgang**
 - **Genindlæs config.json**
+- **Tillad automatisk genåbning af skærmen** (*Vis over andre apps*)
 
-## 10. Opsætning af en ny telefon
+Menuen viser også lager, enheds-id, sidste kontakt med serveren og hvor filerne ligger.
 
-1. Nulstil telefonen, log ind i MobilePay MyShop, slå skærmlås fra.
-2. Installer Automat-appen, giv kamera-tilladelse og notifikationsadgang.
+## 13. Opsætning af en ny telefon
+
+1. Nulstil telefonen, forbind til WiFi, log ind i MobilePay MyShop, slå skærmlås fra.
+2. Installer Automat-appen, giv kamera-tilladelse, notifikationsadgang og
+   *Vis over andre apps*.
 3. Vælg Automat som **standard-startskærm** (Indstillinger → Apps → Standardapps).
-4. Slå batterioptimering fra for Automat og MobilePay.
-5. Log-tilstand: send en betaling på 1 kr., læs `notifikationer.log`, ret
+4. Slå batterioptimering fra for Automat og MobilePay. Sæt telefonen til at
+   tænde ved strøm, hvis modellen kan (afsnit 7).
+5. Sæt `server.url` og `server.token` i `config.json`, og se automaten dukke op på
+   statussiden.
+6. Log-tilstand: send en betaling på 1 kr., læs `notifikationer.log`, ret
    `payment` i `config.json`, genindlæs.
-6. Tilslut motorstyringen, vælg "Brug altid".
-7. Genopfyld, **Simulér betaling**, og derefter en rigtig betaling.
+7. Tilslut motorstyringen via USB-hubben, vælg "Brug altid".
+8. Genopfyld, **Simulér betaling**, og derefter en rigtig betaling.
+9. Træk strømmen i 10 min og sæt den i igen: kommer telefon, app og heartbeat selv op?
 
-## 11. Komponenter (elektronik)
+## 14. Komponenter (elektronik)
 
 | Del | Forslag | Ca. pris |
 |---|---|---|
 | Telefon | Brugt Android 8+ (helst OLED-skærm) | 0–500 kr. |
-| Mikrocontroller | Arduino Nano-klon – eller ESP32 til Bluetooth | 30–60 kr. |
+| Mikrocontroller | Arduino Nano-klon | 30 kr. |
 | Motorstyring | Logic-level MOSFET-modul, eller DRV8871 H-bro pr. søjle (baglæns) | 20–60 kr. |
 | Sensor | Mikrokontakt under vippeplade / i udtag | 10 kr. |
-| USB | OTG-kabel, evt. USB-C-hub med PD-pass-through | 50–150 kr. |
+| USB | USB-C-hub med PD-pass-through (lad + OTG samtidig) | 100–200 kr. |
+| Server | Lille VPS eller eksisterende server, Caddy for https | det I har |
 | Strøm | 12 V-forsyning til motorer + USB-lader | 100–150 kr. |
 | Plexiglas | 3–4 mm, sort folie som maske | 50–100 kr. |
 | MobilePay MyShop | Kræver CVR | 0,99 % pr. salg |
 
-## 12. Plan
+## 15. Plan
 
 1. **Log-tilstand** på MyShop-telefonen: find pakkenavn og tekstformat.
 2. **Bænktest** af firmwaren: motor + mikrokontakt, kommandoer fra Serial Monitor.
 3. **App med `fake`-link**: tjek statusvindue gennem plexiglas, kamera-klip, salg.csv.
-4. **Telefon ↔ Arduino over USB**: test samtidig opladning → ellers Bluetooth.
-5. **Én søjle med tre poser** (ris i stedet for kaffe).
-6. **Udholdenhed**: en uge med en betaling om dagen, genstart og strømsvigt undervejs.
+4. **Telefon ↔ Arduino over USB**: test samtidig opladning via hub i et døgn
+   (batteri-kurven på serverens statusside).
+5. **Server** op, og test strømsvigt/genstart/nedbrud (afsnit 7).
+6. **Én søjle med tre poser** (ris i stedet for kaffe).
+7. **Udholdenhed**: en uge med en betaling om dagen, genstart og strømsvigt undervejs.
