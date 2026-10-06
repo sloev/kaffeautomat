@@ -1,0 +1,30 @@
+{
+  "name": "Kaffeautomaten",
+
+  "payment": {
+    "packages": ["dk.danskebank.mobilepay"],
+    "amountRegex": "modtaget\\s+([\\d.]+,\\d{2})\\s*kr",
+    "logAllNotifications": true
+  },
+
+  "products": [
+    { "id": "kaffe-mellem", "name": "Kaffe, mellemristet 500 g", "priceOre": 6000, "slot": 0, "capacity": 3 }
+  ],
+
+  "link": { "type": "usb", "baud": 9600, "dispenseTimeoutMs": 15000 },
+
+  "display": {
+    "x": 0.08, "y": 0.12, "width": 0.84, "height": 0.22,
+    "textSizeSp": 20, "brightness": 0.4,
+    "qrPayload": ""
+  },
+
+  "camera": { "enabled": true, "lens": "front", "tailMs": 20000, "retentionDays": 30 },
+
+  "ntfyTopic": "",
+
+  "texts": {
+    "busy": "Tak! Din kaffe er på vej",
+    "pickUp": "Tag din kaffe i skuffen"
+  }
+}

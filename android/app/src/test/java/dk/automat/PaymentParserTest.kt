@@ -1,7 +1,7 @@
-package dk.kaffeautomat
+package dk.automat
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -27,11 +27,11 @@ class PaymentParserTest {
         assertTrue(parser.parse(pkg, "k", 1L, null, "Ny besked") is ParseResult.Unreadable)
     }
 
-    @Test fun bags() {
-        assertEquals(1, bagsFor(6000, 6000, 5))
-        assertEquals(2, bagsFor(12000, 6000, 5))
-        assertNull(bagsFor(5000, 6000, 5))   // forkert beløb
-        assertNull(bagsFor(12000, 6000, 1))  // ikke nok på lager
-        assertNull(bagsFor(0, 6000, 5))
+    @Test fun sameNotificationSameKey_differentPaymentsDifferentKeys() {
+        val a = parser.parse(pkg, "k", 1L, null, "Du har modtaget 60,00 kr.") as ParseResult.Ok
+        val again = parser.parse(pkg, "k", 1L, null, "Du har modtaget 60,00 kr.") as ParseResult.Ok
+        val later = parser.parse(pkg, "k", 2L, null, "Du har modtaget 60,00 kr.") as ParseResult.Ok
+        assertEquals(a.payment.key, again.payment.key)
+        assertNotEquals(a.payment.key, later.payment.key)
     }
 }

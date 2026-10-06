@@ -1,25 +1,26 @@
-# Android-app (skelet)
+# Automat – Android-app
 
-Kildefiler til at lægge ind i et nyt Android Studio-projekt (Kotlin, minSdk 26).
-Endnu ikke bygget eller testet på en telefon.
+Kotlin, minSdk 26 (Android 8). Se [docs/design.md](../docs/design.md) for hvordan
+den virker og sættes op.
 
-- `PaymentParser.kt` – genkender MobilePay-notifikationer og læser beløbet. Ren Kotlin, unit-testet i `src/test`.
-- `PaymentListener.kt` – `NotificationListenerService`, der fodrer parseren. `Dispenser` er en skitse, der mangler kø, database og USB-serial.
-
-Manifest-udsnit til tjenesten:
-
-```xml
-<service
-    android:name=".PaymentListener"
-    android:exported="false"
-    android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-    <intent-filter>
-        <action android:name="android.service.notification.NotificationListenerService" />
-    </intent-filter>
-</service>
+```sh
+./gradlew testDebugUnitTest   # unit tests (parser, vare-valg, dedup, config)
+./gradlew assembleDebug       # app/build/outputs/apk/debug/app-debug.apk
 ```
 
-USB-serial til Arduinoen: `com.github.mik3y:usb-serial-for-android` (via JitPack).
+Kræver Android SDK (sæt `sdk.dir` i `local.properties` eller `ANDROID_HOME`).
 
-Første skridt: sæt `Config.logMode = true`, modtag en testbetaling, og ret
-`Config.parser` (pakkenavn + regex) efter det, der står i logcat.
+| Fil | Ansvar |
+|---|---|
+| `Config.kt` | Læser `config.json` |
+| `PaymentListener.kt` | `NotificationListenerService` – får notifikationerne |
+| `PaymentParser.kt` | Genkender MobilePay og læser beløbet |
+| `Matcher.kt` | Beløb → hvilke varer fra hvilke søjler |
+| `Ledger.kt` | Hver betaling behandles én gang, også efter genstart |
+| `Machine.kt` | Hjernen: kø, lager, motorstyring, sundhed, hvad skærmen viser |
+| `DeviceLink.kt` | Tekstprotokol til Arduino over USB-serial (+ `FakeLink` til test) |
+| `ClipRecorder.kt` | Videoklip af kunden pr. køb (CameraX, uden lyd) |
+| `Logs.kt` | `salg.csv`, `notifikationer.log`, push til ejeren via ntfy.sh |
+| `MainActivity.kt` | Sort skærm med lille statusvindue, ejer-menu (langt tryk) |
+
+Eksempler på konfiguration: `examples/` (æg fra gården, test uden hardware).

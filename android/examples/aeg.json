@@ -1,0 +1,11 @@
+{
+  "name": "Æg fra gården",
+  "payment": { "packages": ["dk.danskebank.mobilepay"] },
+  "products": [
+    { "id": "aeg-6",  "name": "6 æg",  "priceOre": 3000, "slot": 0, "capacity": 8 },
+    { "id": "aeg-10", "name": "10 æg", "priceOre": 4500, "slot": 1, "capacity": 8 }
+  ],
+  "display": { "x": 0.05, "y": 0.1, "width": 0.9, "height": 0.3, "textSizeSp": 22 },
+  "camera": { "enabled": true, "lens": "front", "tailMs": 15000, "retentionDays": 14 },
+  "texts": { "busy": "Tak! Dine æg kommer", "pickUp": "Tag æggene i lugen" }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Testautomat",
+  "payment": { "packages": ["dk.danskebank.mobilepay"], "logAllNotifications": true },
+  "products": [ { "id": "test", "name": "Testvare", "priceOre": 100, "slot": 0, "capacity": 5 } ],
+  "link": { "type": "fake" },
+  "camera": { "enabled": false }
+}

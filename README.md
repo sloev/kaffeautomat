@@ -1,9 +1,21 @@
-# Kaffeautomat
+# Automat
 
-Selvbetjent automat, der sælger poser kaffe. Kunden betaler med MobilePay, og
-maskinen slipper en pose ned ad en rampe til en skuffe.
+Byg-selv salgsautomat til hvad som helst. Kunden betaler med MobilePay, og en
+gammel Android-telefon bag plexiglas klarer resten: læser betalingen, viser
+status i et lille vindue, filmer kunden og beder en Arduino om at udlevere
+varen. Ingen abonnementer – kun MobilePay MyShops gebyr på 0,99 % pr. salg.
 
-- [docs/kaffeautomaten-mekanik.pdf](docs/kaffeautomaten-mekanik.pdf) – mekanikken: tekstil-hængekøjer, én stålwire og en skrå rampe.
-- [docs/betaling.md](docs/betaling.md) – betaling uden abonnement: MobilePay MyShop → Android-telefon læser notifikationen → Arduino kører motoren.
-- [arduino/kaffeautomat/](arduino/kaffeautomat/) – Arduino-sketch: motor + stopkontakt, styret med tekstkommandoer over serial.
-- [android/](android/) – kildekode-skelet til telefon-appen (notifikationslæser og beløbs-parser med tests).
+Første automat: **kaffeautomaten** ([mekanik](docs/kaffeautomaten-mekanik.pdf)).
+
+| Mappe | Indhold |
+|---|---|
+| [docs/design.md](docs/design.md) | Hele designet: betaling, statusvindue, kamera, protokol, konfiguration, opsætning |
+| [android/](android/) | Telefon-appen (Kotlin). Alt automat-specifikt står i `config.json` |
+| [firmware/automat/](firmware/automat/) | Arduino-firmware: én motor + én sensor pr. søjle |
+| [docs/kaffeautomaten-mekanik.pdf](docs/kaffeautomaten-mekanik.pdf) | Kaffeautomatens mekanik: hængekøjer, wire og rampe |
+
+## Ny automat
+
+1. Byg mekanikken – én motor og én "vare landet"-sensor pr. søjle.
+2. Ret `SLOTS[]` i firmwaren til dine pins.
+3. Skriv en `config.json` med varer, priser og tekster (se `android/examples/`).
