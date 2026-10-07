@@ -39,6 +39,10 @@
                 android:resource="@xml/usb_devices" />
         </activity>
 
+        <activity
+            android:name=".ScanActivity"
+            android:exported="false" />
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

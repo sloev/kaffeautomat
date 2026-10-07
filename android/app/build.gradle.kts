@@ -22,7 +22,16 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    // Standard-config i appen = kaffeautomat-eksemplet (examples/kaffeautomat/config.json).
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/exampleAssets"))
 }
+
+val copyExampleConfig by tasks.registering(Copy::class) {
+    from(rootProject.file("../examples/kaffeautomat/config.json"))
+    into(layout.buildDirectory.dir("generated/exampleAssets"))
+}
+tasks.named("preBuild") { dependsOn(copyExampleConfig) }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
@@ -34,6 +43,7 @@ dependencies {
     implementation("androidx.camera:camera-camera2:$camerax")
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-video:$camerax")
+    implementation("androidx.camera:camera-view:$camerax")
 
     implementation("com.github.mik3y:usb-serial-for-android:3.8.1")
     implementation("com.google.zxing:core:3.5.3")

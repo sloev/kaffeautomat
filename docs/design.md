@@ -6,7 +6,7 @@ filmer kunden, viser status bag et stykke plexiglas og beder en Arduino om at
 udlevere varen.
 
 Første anvendelse er kaffeautomaten, hvis mekanik står i
-[kaffeautomaten-mekanik.pdf](kaffeautomaten-mekanik.pdf) (tekstil-hængekøjer,
+[examples/kaffeautomat/mekanik.pdf](../examples/kaffeautomat/mekanik.pdf) (tekstil-hængekøjer,
 én stålwire, skrå rampe, vippeplade med mikrokontakt).
 
 ## Krav
@@ -38,7 +38,7 @@ Første anvendelse er kaffeautomaten, hvis mekanik står i
 | **Android-app** (`android/`) | Betaling, vare-valg, lager, kø, skærm, kamera, log, besked til ejer | `config.json` |
 | **Firmware** (`firmware/automat/`) | Kør søjle *n*'s motor til søjle *n*'s sensor melder "landet" | `SLOTS[]`-tabellen |
 | **Mekanik** | Selve udleveringen (wire, spiral, skub…) | Bygges pr. automat |
-| **Server** (`server/`) | Modtager heartbeat, viser status, alarmerer når en automat er væk, sender kommandoer | Jeres egen; reference i Python |
+| **Server** (`worker/`) | Cloudflare Worker + D1: provisionering, parring, heartbeat, dashboard, alarmer, kommandoer, config | Én installation til alle automater |
 
 Appen kender ikke til kaffe, wire eller ramper. Den ved kun: *varer har en pris
 og et søjle-nummer*, og *søjle n udleveres med `DISPENSE n`*.
@@ -210,21 +210,64 @@ Vælg telefonmodel efter dette og USB-kravet i afsnit 6.
 Automat og MobilePay, automatiske systemopdateringer om natten (eller fra),
 WiFi altid tændt i dvale.
 
-## 8. Server: "jeg er tændt" + fjernstyring
+## 8. Server: Cloudflare Worker
 
-Telefonen sender hvert `heartbeatSec` (60 s) en `POST {url}/heartbeat` til jeres
-server. Telefonen kalder kun ud, så der skal ikke åbnes porte på stedet.
-Serveren **skal** være https.
+Serveren ([`worker/`](../worker)) kører på Cloudflare Workers med en D1-database
+og holder sig inden for **gratis-planen** (intet abonnement):
 
-```json
-"server": { "url": "https://automat.example.dk/api", "token": "lang-tilfældig-streng", "heartbeatSec": 60 }
-```
+| Del | Hvad | Pris |
+|---|---|---|
+| Dashboard | Statiske filer (`worker/public/`) serveret og cachet af Cloudflares edge – kører ikke Worker-kode | Gratis, tæller ikke som requests |
+| API | `/api/*` i Worker'en | 100.000 requests/dag gratis |
+| Database | D1 (SQLite) | 5 mio. læsninger og 100.000 skrivninger/dag gratis |
+| Alarmer | Cron hvert 5. min + ntfy.sh | Gratis |
 
-**Request** (`Authorization: Bearer <token>`):
+Et heartbeat er **1 request, 2 læsninger og normalt 0 skrivninger**: status
+skrives kun, når noget har ændret sig, eller højst hvert 5. minut; config sendes
+kun, når telefonens version er bagud. Med `heartbeatSec: 60` bruger en automat
+ca. 1.440 requests/dag – **plads til ca. 60 automater** på gratis-planen
+(sæt `heartbeatSec` op for flere).
+
+### Provisionering og roller
+
+- **Ejeren** (owner) logger ind med brugernavn/kodeord fra Worker-secrets.
+  Kun ejeren kan oprette automater, lave parringskoder, oprette admins og
+  give dem adgang.
+- **Admins** har eget login (PBKDF2-hashede kodeord i D1) og ser og styrer kun
+  de automater, de er tildelt: status, lager, kommandoer, config, hændelser,
+  alarm-emne. De kan selv skifte kodeord.
+- Sessions er signerede cookies (`HttpOnly`, `Secure`, `SameSite=Strict`).
+  Skiftes et kodeord eller slettes en admin, er gamle sessions ugyldige.
+
+### Ny automat – sådan
+
+1. Ejeren: dashboard → **Ny automat** → navn + eksempel (fx `kaffeautomat`).
+   Automaten oprettes med eksemplets `config.json`, og siden viser en
+   **parrings-QR-kode** (gælder 24 timer, kan bruges én gang).
+2. Telefonen: ejer-menuen → **Forbind til server: scan QR-kode**, og hold
+   QR-koden foran frontkameraet (eller *indtast kode* med serverens adresse og
+   koden). Telefonen får et enheds-token og henter sin config.
+3. Ejeren: **Admins** → opret admin, og tilføj vedkommende på automatens side.
+
+Ny telefon til samme automat: **Lav parringskode** igen. Den gamle telefon
+virker, indtil den nye er parret. **Afbryd telefon** ugyldiggør tokenet med det samme.
+
+### Config styres fra serveren
+
+`config.json` redigeres i dashboardet. Hver gemning får et nyt versionsnummer;
+telefonen sender sit versionsnummer med hvert heartbeat og får den nye config
+i svaret, når den er bagud. Ugyldig config afvises af både server og telefon.
+
+### Heartbeat-protokol
+
+Telefonen sender hvert `heartbeatSec` (60 s) `POST {url}/heartbeat` med
+`Authorization: Bearer <enheds-token>`. Telefonen kalder kun ud, så der skal
+ikke åbnes porte på stedet. Serveren skal være https.
 
 ```json
 {
   "deviceId": "3f0c…",              "name": "Kaffeautomaten",   "appVersion": "0.1",
+  "configVersion": 3,
   "time": 1791300000000,             "appStartedAt": 1791290000000, "phoneUptimeSec": 86400,
   "screen":  { "title": "Kaffeautomaten", "lines": ["Kaffe · 60 kr", "Betal med MobilePay"], "mood": "NORMAL" },
   "health":  { "online": true, "motorLink": true, "notificationAccess": true, "uiVisible": true,
@@ -239,33 +282,36 @@ Serveren **skal** være https.
 
 Hændelser ligger i `udbakke.jsonl` på telefonen, til serveren har svaret 2xx – så
 intet går tabt, hvis WiFi er nede. Typer: `start` (evt. med `previousCrash`),
-`boot`, `sale`, `refund`, `fault`, `refill`, `unreadable`, `motorLink`,
-`notificationAccess`, `configError`, `command`.
+`boot`, `paired`, `sale`, `refund`, `fault`, `refill`, `unreadable`, `motorLink`,
+`notificationAccess`, `configApplied`, `configError`, `command`.
 
-**Svar** – valgfrie kommandoer, som telefonen udfører med det samme og
-kvitterer for med en `command`-hændelse (`result: "ok"` eller fejltekst):
+**Svar:**
 
 ```json
-{ "commands": [
-  { "id": "a1", "cmd": "refill" },
-  { "id": "a2", "cmd": "clearFault" },
-  { "id": "a3", "cmd": "setStock", "productId": "kaffe-mellem", "count": 3 },
-  { "id": "a4", "cmd": "reloadConfig" },
-  { "id": "a5", "cmd": "setConfig", "config": { "...": "hele config.json" } },
-  { "id": "a6", "cmd": "simulate", "amountOre": 6000 }
-] }
+{
+  "configVersion": 4,
+  "config": { "...": "kun hvis telefonens version er bagud" },
+  "commands": [
+    { "id": "a1", "cmd": "refill" },
+    { "id": "a2", "cmd": "clearFault" },
+    { "id": "a3", "cmd": "setStock", "productId": "kaffe-mellem", "count": 3 },
+    { "id": "a4", "cmd": "reloadConfig" },
+    { "id": "a5", "cmd": "simulate", "amountOre": 6000 }
+  ]
+}
 ```
 
-Kommandoer leveres højst én gang. `simulate` udleverer en vare uden betaling –
-beskyt token og admin-adgang derefter.
+Kommandoer leveres højst én gang, og telefonen kvitterer med en
+`command`-hændelse. `simulate` udleverer en vare uden betaling.
 
-**Hvem opdager at telefonen er død?** Det kan telefonen ikke selv. Serveren
-alarmerer, når der ikke er kommet heartbeat i `OFFLINE_AFTER` sekunder.
+**Parring:** `POST {url}/pair` med `{"code": "…"}` → `{"token", "automatId",
+"name", "config", "configVersion"}`. QR-koden indeholder
+`{"url": "https://…/api", "code": "…"}`.
 
-**Reference-server:** [`server/server.py`](../server/server.py) – ét Python-script
-uden afhængigheder: tager imod heartbeat, statusside med knapper (genopfyld,
-nulstil fejl, genindlæs config), hændelseslog og alarmer via ntfy.sh (offline,
-refundering, fejl, nedbrud). Kør den bag Caddy/nginx for https.
+**Hvem opdager at telefonen er død?** Det kan telefonen ikke selv. Cron-jobbet
+alarmerer via automatens ntfy-emne, når der ikke er kommet heartbeat i
+"Alarm efter" minutter (standard 15), og igen når den er online. Refunderinger,
+fejl, nedbrud og fejlede kommandoer alarmeres også.
 
 ## 9. NFC / kort-betaling? (vurderet – ikke nu)
 
@@ -297,9 +343,10 @@ Kort-betaling bliver en ekstra kilde ved siden af MobilePay, når 1–4 er afkla
 
 ## 10. Konfiguration (`config.json`)
 
-Ligger i `Android/data/dk.automat/files/config.json` på telefonen og kan rettes
-via USB fra en computer. Første gang kopieres standarden fra appen
-(`android/app/src/main/assets/config.json`). Flere eksempler i `android/examples/`.
+Redigeres i dashboardet og hentes af telefonen (afsnit 8). Den ligger i
+`Android/data/dk.automat/files/config.json` på telefonen og kan også rettes via
+USB, hvis automaten kører uden server. Appens standard er kaffeautomat-eksemplet;
+alle eksempler ligger i [`examples/`](../examples).
 
 | Felt | Betydning |
 |---|---|
@@ -312,7 +359,7 @@ via USB fra en computer. Første gang kopieres standarden fra appen
 | `display` | Statusvinduet, se afsnit 4 |
 | `camera` | Se afsnit 5 |
 | `ntfyTopic` | Emne på [ntfy.sh](https://ntfy.sh) til push-beskeder direkte fra telefonen (gratis) |
-| `server` | `url`, `token`, `heartbeatSec` – se afsnit 8. Tom `url` = ingen server |
+| `server` | Kun uden parring: `url`, `token`, `heartbeatSec`. Parring gemmer forbindelsen i `server.json` |
 | `texts` | Alle tekster kunden ser |
 
 ## 11. Filer på telefonen
@@ -326,6 +373,7 @@ I `Android/data/dk.automat/files/`:
 | `betalinger.txt` | Behandlede betalinger (dedup) |
 | `udbakke.jsonl` | Hændelser der venter på at blive sendt til serveren |
 | `nedbrud.txt` | Seneste nedbrud (sendes og slettes ved næste opstart) |
+| `server.json` | Serverens adresse og enheds-token fra parringen |
 | `klip/` | Videoklip |
 
 ## 12. Ejer-menu
@@ -341,6 +389,7 @@ Langt tryk på skærmen (lågen skal være åben, skærmen sidder bag glas):
 - **Notifikationsadgang**
 - **Genindlæs config.json**
 - **Tillad automatisk genåbning af skærmen** (*Vis over andre apps*)
+- **Forbind til server** – scan QR-kode eller indtast kode (afsnit 8)
 
 Menuen viser også lager, enheds-id, sidste kontakt med serveren og hvor filerne ligger.
 
@@ -352,10 +401,10 @@ Menuen viser også lager, enheds-id, sidste kontakt med serveren og hvor filerne
 3. Vælg Automat som **standard-startskærm** (Indstillinger → Apps → Standardapps).
 4. Slå batterioptimering fra for Automat og MobilePay. Sæt telefonen til at
    tænde ved strøm, hvis modellen kan (afsnit 7).
-5. Sæt `server.url` og `server.token` i `config.json`, og se automaten dukke op på
-   statussiden.
+5. Opret automaten i dashboardet, og **forbind til server** fra ejer-menuen
+   (scan QR-koden). Automaten dukker op i dashboardet.
 6. Log-tilstand: send en betaling på 1 kr., læs `notifikationer.log`, ret
-   `payment` i `config.json`, genindlæs.
+   `payment` i config'en i dashboardet.
 7. Tilslut motorstyringen via USB-hubben, vælg "Brug altid".
 8. Genopfyld, **Simulér betaling**, og derefter en rigtig betaling.
 9. Træk strømmen i 10 min og sæt den i igen: kommer telefon, app og heartbeat selv op?
@@ -369,7 +418,7 @@ Menuen viser også lager, enheds-id, sidste kontakt med serveren og hvor filerne
 | Motorstyring | Logic-level MOSFET-modul, eller DRV8871 H-bro pr. søjle (baglæns) | 20–60 kr. |
 | Sensor | Mikrokontakt under vippeplade / i udtag | 10 kr. |
 | USB | USB-C-hub med PD-pass-through (lad + OTG samtidig) | 100–200 kr. |
-| Server | Lille VPS eller eksisterende server, Caddy for https | det I har |
+| Server | Cloudflare Workers + D1, gratis-planen | 0 kr. |
 | Strøm | 12 V-forsyning til motorer + USB-lader | 100–150 kr. |
 | Plexiglas | 3–4 mm, sort folie som maske | 50–100 kr. |
 | MobilePay MyShop | Kræver CVR | 0,99 % pr. salg |

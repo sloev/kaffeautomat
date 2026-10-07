@@ -75,6 +75,10 @@ object Machine {
     @Volatile private var uiHiddenSince = SystemClock.elapsedRealtime()
     private val startedAt = System.currentTimeMillis()
     private val counts = mutableMapOf("payments" to 0, "ok" to 0, "refund" to 0)
+    /** Serveren telefonen melder til (fra parring eller config.json), eller null. */
+    @Volatile var serverUrl: String? = null
+        private set
+    @Volatile private var heartbeatSec = 60
     /** Tidspunkt for sidste svar fra serveren (0 = aldrig). */
     @Volatile var lastServerContact = 0L
         private set
@@ -83,8 +87,8 @@ object Machine {
     val screen: StateFlow<Screen> = _screen
 
     /** Tælles op når config.json er genindlæst, så skærmen kan bygge sig selv om. */
-    private val _configVersion = MutableStateFlow(0)
-    val configVersion: StateFlow<Int> = _configVersion
+    private val _configReloads = MutableStateFlow(0)
+    val configReloads: StateFlow<Int> = _configReloads
 
     @Synchronized
     fun start(context: Context) {
@@ -147,7 +151,10 @@ object Machine {
             AppConfig.parse(app.assets.open("config.json").bufferedReader().readText())
         }
         notifier = Notifier(config.ntfyTopic)
-        server = config.server?.let { ServerClient(it, outbox) }
+        val serverConfig = pairedServer() ?: config.server
+        server = serverConfig?.let { ServerClient(it, outbox) }
+        serverUrl = serverConfig?.url
+        heartbeatSec = serverConfig?.heartbeatSec ?: 60
         link = if (config.link.type == "fake") FakeLink() else UsbSerialLink(app, config.link.baud)
     }
 
@@ -158,7 +165,7 @@ object Machine {
             linkOk = false
         }
         configError?.let { report("configError", "error" to it) }
-        _configVersion.value++
+        _configReloads.value++
         refresh()
     }
 
@@ -166,6 +173,39 @@ object Machine {
     private fun writeConfig(json: JSONObject) {
         AppConfig.parse(json.toString())
         File(files, "config.json").writeText(json.toString(2))
+        reloadConfig()
+    }
+
+    /** Serveren, telefonen er parret med (server.json), hvis nogen. */
+    private fun pairedServer(): ServerConfig? = try {
+        File(files, "server.json").takeIf { it.exists() }?.readText()?.let { JSONObject(it) }
+            ?.let { ServerConfig(it.getString("url"), it.getString("token"), it.optInt("heartbeatSec", 60)) }
+    } catch (e: Exception) {
+        Log.w(TAG, "server.json kunne ikke læses", e)
+        null
+    }
+
+    /** Hvilken config-version fra serveren telefonen kører (0 = ingen). */
+    private var serverConfigVersion: Int
+        get() = prefs.getInt("serverConfigVersion", 0)
+        set(v) = prefs.edit().putInt("serverConfigVersion", v).apply()
+
+    /**
+     * Parrer telefonen med en server ud fra QR-koden fra dashboardet: henter et
+     * enheds-token og automatens config. Blokerer – kald fra en baggrundstråd.
+     */
+    fun pair(apiUrl: String, code: String) {
+        val url = apiUrl.trim().trimEnd('/')
+        require(url.startsWith("https://")) { "Serveren skal bruge https" }
+        val r = pairRequest(url, code)
+        val config = r.getJSONObject("config")
+        AppConfig.parse(config.toString())
+        File(files, "server.json").writeText(
+            JSONObject().put("url", url).put("token", r.getString("token")).put("heartbeatSec", 60).toString(2),
+        )
+        File(files, "config.json").writeText(config.toString(2))
+        serverConfigVersion = r.optInt("configVersion", 0)
+        report("paired", "automatId" to r.optString("automatId"))
         reloadConfig()
     }
 
@@ -290,13 +330,28 @@ object Machine {
                 val response = server?.heartbeat(status())
                 if (response != null) {
                     lastServerContact = System.currentTimeMillis()
+                    applyServerConfig(response)
                     parseCommands(response).forEach { runCommand(it) }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Heartbeat fejlede", e)
             }
-            delay((config.server?.heartbeatSec ?: 60) * 1000L)
+            delay(heartbeatSec * 1000L)
         }
+    }
+
+    /** Serveren sender config med, når telefonens version er bagud. */
+    private fun applyServerConfig(response: JSONObject) {
+        val config = response.optJSONObject("config") ?: return
+        val version = response.optInt("configVersion", 0)
+        try {
+            writeConfig(config)
+            report("configApplied", "configVersion" to version)
+        } catch (e: Exception) {
+            report("configError", "error" to "config v$version afvist: ${e.message}")
+        }
+        // Også ved fejl: ellers hentes den samme ugyldige config ved hvert heartbeat.
+        serverConfigVersion = version
     }
 
     private fun runCommand(c: ServerCommand) {
@@ -308,7 +363,6 @@ object Machine {
                 "setStock" -> config.products.first { it.id == c.args.getString("productId") }
                     .let { setStock(it, c.args.getInt("count")) }.also { refresh() }
                 "reloadConfig" -> reloadConfig()
-                "setConfig" -> writeConfig(c.args.getJSONObject("config"))
                 "simulate" -> simulatePayment(c.args.getLong("amountOre"))
                 else -> throw IllegalArgumentException("ukendt kommando")
             }
@@ -328,6 +382,7 @@ object Machine {
         val s = _screen.value
         return JSONObject()
             .put("deviceId", deviceId)
+            .put("configVersion", serverConfigVersion)
             .put("name", config.name)
             .put("appVersion", app.packageManager.getPackageInfo(app.packageName, 0).versionName)
             .put("time", System.currentTimeMillis())

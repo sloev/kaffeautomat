@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "automat",
+  "main": "src/index.js",
+  "compatibility_date": "2025-09-01",
+
+  // The dashboard is static files served by Cloudflare's edge without invoking the
+  // Worker (free and cached). Only /api/* runs Worker code.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
+    "not_found_handling": "single-page-application"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "automat",
+      // Replace with the id printed by `npx wrangler d1 create automat`.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Offline detection and event pruning.
+  "triggers": { "crons": ["*/5 * * * *"] },
+
+  "vars": {
+    "OWNER_USERNAME": "owner",
+    "EVENT_RETENTION_DAYS": "90"
+  }
+  // Secrets (npx wrangler secret put …): OWNER_PASSWORD, SESSION_SECRET
+}

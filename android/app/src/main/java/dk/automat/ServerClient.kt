@@ -45,6 +45,35 @@ fun parseCommands(response: JSONObject?): List<ServerCommand> {
     }
 }
 
+/** POST {url}/pair med engangskoden fra dashboardet. Returnerer token, config og configVersion. */
+fun pairRequest(url: String, code: String): JSONObject {
+    val c = URL("$url/pair").openConnection() as HttpURLConnection
+    try {
+        c.requestMethod = "POST"
+        c.doOutput = true
+        c.connectTimeout = 15_000
+        c.readTimeout = 15_000
+        c.setRequestProperty("Content-Type", "application/json")
+        c.outputStream.use { it.write(JSONObject().put("code", code).toString().toByteArray()) }
+        val ok = c.responseCode in 200..299
+        val text = (if (ok) c.inputStream else c.errorStream)?.bufferedReader()?.readText().orEmpty()
+        if (!ok) throw IllegalStateException(runCatching { JSONObject(text).getString("error") }.getOrDefault("HTTP ${c.responseCode}"))
+        return JSONObject(text)
+    } finally {
+        c.disconnect()
+    }
+}
+
+/** Indholdet af parrings-QR-koden: {"url": "https://…/api", "code": "…"}. */
+fun parsePairPayload(text: String): Pair<String, String>? = try {
+    val o = JSONObject(text)
+    val url = o.getString("url")
+    val code = o.getString("code")
+    if (url.isBlank() || code.isBlank()) null else url to code
+} catch (e: Exception) {
+    null
+}
+
 /**
  * Heartbeat: POST {url}/heartbeat med status + ventende hændelser, hvert `heartbeatSec`.
  * Svaret kan indeholde kommandoer. Telefonen kalder kun ud – ingen åbne porte på stedet.

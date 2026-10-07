@@ -7,16 +7,16 @@ import java.io.File
 
 class ConfigTest {
     @Test fun bundledConfigParses() {
-        val c = AppConfig.parse(File("src/main/assets/config.json").readText())
+        val c = AppConfig.parse(File("../../examples/kaffeautomat/config.json").readText())
         assertEquals("Kaffeautomaten", c.name)
         assertEquals(6000L, c.products.single().priceOre)
         assertTrue(c.parser.amountRegex.containsMatchIn("Du har modtaget 60,00 kr."))
     }
 
     @Test fun examplesParse() {
-        File("../examples").listFiles { f -> f.name.endsWith(".json") }!!.forEach {
-            AppConfig.parse(it.readText())
-        }
+        val examples = File("../../examples").listFiles()!!.map { File(it, "config.json") }.filter { it.exists() }
+        assertTrue(examples.size >= 3)
+        examples.forEach { AppConfig.parse(it.readText()) }
     }
 
     @Test fun defaults() {

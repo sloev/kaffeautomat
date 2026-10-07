@@ -31,8 +31,10 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
 /**
@@ -46,6 +48,18 @@ class MainActivity : ComponentActivity() {
     private lateinit var title: TextView
     private lateinit var body: TextView
     private lateinit var qr: ImageView
+
+    private val scanPairCode = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        // Scanneren lånte kameraet; bind det til klip igen.
+        if (Machine.config.camera.enabled &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        ) {
+            startCamera()
+        }
+        val text = result.data?.getStringExtra(ScanActivity.EXTRA_TEXT) ?: return@registerForActivityResult
+        val (url, code) = parsePairPayload(text) ?: return@registerForActivityResult
+        pairWith(url, code)
+    }
 
     private val askCamera = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startCamera()
@@ -74,8 +88,8 @@ class MainActivity : ComponentActivity() {
         }
         lifecycleScope.launch { antiBurnIn() }
         lifecycleScope.launch {
-            val shown = Machine.configVersion.value
-            Machine.configVersion.collect { if (it != shown) recreate() } // ny config: nyt vindue/kamera
+            val shown = Machine.configReloads.value
+            Machine.configReloads.collect { if (it != shown) recreate() } // ny config: nyt vindue/kamera
         }
 
         if (Machine.config.camera.enabled) {
@@ -205,17 +219,19 @@ class MainActivity : ComponentActivity() {
             "Notifikationsadgang",
             "Genindlæs config.json",
             "Tillad automatisk genåbning af skærmen",
+            "Forbind til server: scan QR-kode",
+            "Forbind til server: indtast kode",
         )
         val contact = Machine.lastServerContact
         val serverText = when {
-            Machine.config.server == null -> "ingen server sat op"
+            Machine.serverUrl == null -> "ikke forbundet"
             contact == 0L -> "ingen kontakt endnu"
             else -> "sidst kontakt for ${(System.currentTimeMillis() - contact) / 1000} s siden"
-        }
+        } + (Machine.serverUrl?.let { "\n$it" } ?: "")
         AlertDialog.Builder(this)
             .setTitle("Lager\n$stockText\n\nServer: $serverText\nEnhed: ${Machine.deviceId}\nFiler: ${Machine.filesDir}")
             .setItems(items) { _, which ->
-                if (which == 4 || which == 6) Machine.pauseRelaunch(10 * 60_000L)
+                if (which == 4 || which == 6 || which == 7) Machine.pauseRelaunch(10 * 60_000L)
                 when (which) {
                     0 -> Machine.refillAll()
                     1 -> Machine.clearFault()
@@ -226,9 +242,49 @@ class MainActivity : ComponentActivity() {
                     6 -> startActivity(
                         Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:$packageName")),
                     )
+                    7 -> scanPairCode.launch(Intent(this, ScanActivity::class.java))
+                    8 -> askPairCode()
                 }
             }
             .show()
+    }
+
+    /** Parring uden kamera: serverens adresse og koden fra dashboardet. */
+    private fun askPairCode() {
+        val density = resources.displayMetrics.density
+        val url = EditText(this).apply {
+            hint = "https://…/api"
+            setText(Machine.serverUrl ?: "https://")
+            inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val code = EditText(this).apply {
+            hint = "Parringskode"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+        }
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (16 * density).toInt()
+            setPadding(pad, pad / 2, pad, 0)
+            addView(url)
+            addView(code)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Forbind til server")
+            .setView(form)
+            .setPositiveButton("Forbind") { _, _ -> pairWith(url.text.toString(), code.text.toString()) }
+            .setNegativeButton("Annullér", null)
+            .show()
+    }
+
+    private fun pairWith(url: String, code: String) {
+        lifecycleScope.launch {
+            val error = withContext(Dispatchers.IO) { runCatching { Machine.pair(url, code) }.exceptionOrNull() }
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle(if (error == null) "Forbundet" else "Kunne ikke forbinde")
+                .setMessage(error?.message ?: "Telefonen har hentet sin config fra serveren.")
+                .setPositiveButton("OK", null)
+                .show()
+        }
     }
 
     private fun askNumber(label: String, default: Long, then: (Long) -> Unit) {

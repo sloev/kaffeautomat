@@ -26,6 +26,12 @@ class ServerClientTest {
         assertEquals(listOf(2, 3, 4), o.peek(100).map { it.getInt("n") })
     }
 
+    @Test fun parsesPairPayload() {
+        assertEquals("https://a.dk/api" to "ABC", parsePairPayload("""{"url":"https://a.dk/api","code":"ABC"}"""))
+        assertEquals(null, parsePairPayload("https://example.com"))
+        assertEquals(null, parsePairPayload("""{"url":"","code":"ABC"}"""))
+    }
+
     @Test fun parsesCommands() {
         val r = JSONObject("""{"commands":[{"id":"1","cmd":"refill"},{"id":"2"},{"id":"3","cmd":"setStock","productId":"x","count":2}]}""")
         val cmds = parseCommands(r)
